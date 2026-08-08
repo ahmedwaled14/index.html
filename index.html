@@ -1,0 +1,475 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta name="robots" content="noindex, nofollow">
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pharma Batch & Container Tracker</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Camera QR Scanner -->
+    <script src="https://unpkg.com/html5-qrcode"></script>
+    <!-- jsPDF & AutoTable for PDF Generation -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.28/jspdf.plugin.autotable.min.js"></script>
+    <!-- Firebase (shared real-time database) -->
+    <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+</head>
+<body class="bg-slate-100 text-slate-800 font-sans p-4 min-h-screen">
+
+    <div class="max-w-md mx-auto bg-white rounded-xl shadow-md p-6 space-y-4">
+        <h1 class="text-xl font-bold text-slate-900 border-b pb-2">Corridor Container Tracker</h1>
+
+        <!-- Connection status -->
+        <div id="connStatus" class="text-xs text-center py-1.5 rounded-md bg-slate-100 text-slate-500">
+            Connecting to shared database...
+        </div>
+
+        <!-- Camera Scanner Area -->
+        <div class="bg-slate-50 p-3 rounded-lg border border-slate-200">
+            <div id="reader" class="w-full rounded-lg overflow-hidden"></div>
+            <p id="scan-status" class="text-xs text-slate-500 text-center mt-1 hidden"></p>
+            <button id="start-scan-btn" onclick="startScanner()" class="w-full mt-2 bg-blue-600 text-white font-medium py-2 rounded-md hover:bg-blue-700 transition">
+                📷 Open Camera / Scan Container QR
+            </button>
+            <button id="stop-scan-btn" onclick="stopScanner()" class="w-full mt-2 bg-rose-600 text-white font-medium py-2 rounded-md hidden">
+                Stop Camera
+            </button>
+        </div>
+
+        <!-- Inputs Form -->
+        <div class="space-y-3">
+            <div>
+                <label class="block text-xs font-semibold text-slate-500 uppercase mb-1">1. Select Zone</label>
+                <select id="zoneSelect" class="w-full p-2.5 bg-white border border-slate-300 rounded-md focus:outline-blue-500 font-medium text-slate-700">
+                    <option value="" disabled selected>Loading zones...</option>
+                </select>
+                <p id="zoneHint" class="text-[11px] text-slate-400 mt-1"></p>
+            </div>
+
+            <div>
+                <label class="block text-xs font-semibold text-slate-500 uppercase mb-1">2. Batch Number</label>
+                <input type="text" id="batchInput" placeholder="Scan or enter Batch Number" class="w-full p-2 border border-slate-300 rounded-md focus:outline-blue-500">
+            </div>
+
+            <div>
+                <label class="block text-xs font-semibold text-slate-500 uppercase mb-1">3. Container Number</label>
+                <input type="text" id="containerInput" placeholder="e.g. Container 3 of 7 or 3/7" class="w-full p-2 border border-slate-300 rounded-md focus:outline-blue-500">
+            </div>
+
+            <div>
+                <label class="block text-xs font-semibold text-slate-500 uppercase mb-1">4. Personnel Name / ID</label>
+                <input type="text" id="operatorInput" placeholder="Personnel ID or Name" class="w-full p-2 border border-slate-300 rounded-md focus:outline-blue-500">
+            </div>
+
+            <button id="confirmBtn" onclick="logMovement()" class="w-full bg-emerald-600 text-white font-bold py-2.5 rounded-md hover:bg-emerald-700 transition shadow">
+                Confirm & Log Container
+            </button>
+        </div>
+
+        <!-- Zone occupancy overview -->
+        <div class="pt-4 border-t border-slate-200">
+            <h2 class="text-md font-semibold text-slate-700 mb-2">Zone Availability</h2>
+            <div id="zoneOverview" class="grid grid-cols-2 gap-2 text-xs"></div>
+        </div>
+
+        <!-- Search by Batch -->
+        <div class="pt-4 border-t border-slate-200">
+            <label class="block text-xs font-semibold text-slate-500 uppercase mb-1">Search Batch → Last Known Zone</label>
+            <input type="text" id="searchBatchInput" oninput="searchBatch()" placeholder="Type or scan a Batch Number..." class="w-full p-2 border border-slate-300 rounded-md focus:outline-blue-500">
+            <div id="searchResult" class="mt-2 hidden"></div>
+        </div>
+
+        <!-- Recent Logs Table -->
+        <div class="pt-4 border-t border-slate-200">
+            <div class="flex justify-between items-center mb-2">
+                <h2 class="text-md font-semibold text-slate-700">Recent Movements</h2>
+                <div class="space-x-1">
+                    <button onclick="exportPDF()" class="text-xs bg-red-600 hover:bg-red-700 text-white font-medium px-2.5 py-1 rounded shadow transition">📄 Export PDF</button>
+                    <button onclick="exportCSV()" class="text-xs bg-slate-200 hover:bg-slate-300 px-2 py-1 rounded text-slate-700">CSV</button>
+                </div>
+            </div>
+            <div class="max-h-52 overflow-y-auto border border-slate-200 rounded">
+                <table class="w-full text-xs text-left text-slate-600">
+                    <thead class="bg-slate-100 text-slate-700 sticky top-0">
+                        <tr>
+                            <th class="p-2">Batch</th>
+                            <th class="p-2">Container</th>
+                            <th class="p-2">Zone</th>
+                            <th class="p-2">Pallet</th>
+                            <th class="p-2">Time</th>
+                        </tr>
+                    </thead>
+                    <tbody id="logTableBody">
+                        <!-- Log entries load here -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // =====================================================================
+        // FIREBASE SETUP — paste your own config object below.
+        // Get it from: Firebase Console → Project Settings → Your apps → Web app
+        // =====================================================================
+        const firebaseConfig = {
+            apiKey: "AIzaSyAYiU9DWGd1CROQ4b-V8tmaoArYroer1_s",
+            authDomain: "batch-tracker-a13ad.firebaseapp.com",
+            projectId: "batch-tracker-a13ad",
+            storageBucket: "batch-tracker-a13ad.firebasestorage.app",
+            messagingSenderId: "398602563823",
+            appId: "1:398602563823:web:0467d47b9f2eb661ef2b1a"
+        };
+
+        const ZONE_NAMES = ['Zone A', 'Zone B', 'Zone C', 'Zone D', 'Zone E', 'Zone F'];
+        const PALLETS_PER_ZONE = 4;
+
+        let db;
+        let zonesData = {};   // { "Zone A": { pallets: [false,false,true,false] }, ... }
+        let logs = [];        // movements, newest first
+        let html5QrCode;
+
+        function initFirebase() {
+            try {
+                firebase.initializeApp(firebaseConfig);
+                db = firebase.firestore();
+                setConnStatus('Connected — data is live and shared with all devices', 'ok');
+                ensureZonesExist();
+                listenToZones();
+                listenToMovements();
+            } catch (err) {
+                setConnStatus('Setup needed: paste your Firebase config in the code (see comments).', 'error');
+                console.error(err);
+            }
+        }
+
+        function setConnStatus(text, type) {
+            const el = document.getElementById('connStatus');
+            el.textContent = text;
+            el.className = 'text-xs text-center py-1.5 rounded-md ' +
+                (type === 'ok' ? 'bg-emerald-50 text-emerald-600'
+                 : type === 'error' ? 'bg-rose-50 text-rose-600'
+                 : 'bg-slate-100 text-slate-500');
+        }
+
+        // Create the 6 zone documents the first time the app ever runs.
+        // Safe to call repeatedly — it only creates what's missing.
+        async function ensureZonesExist() {
+            for (const zoneName of ZONE_NAMES) {
+                const ref = db.collection('zones').doc(zoneName);
+                const snap = await ref.get();
+                if (!snap.exists) {
+                    await ref.set({ pallets: Array(PALLETS_PER_ZONE).fill(false) }); // false = empty slot
+                }
+            }
+        }
+
+        // Live-updates zonesData whenever ANY device changes a zone's pallets.
+        function listenToZones() {
+            db.collection('zones').onSnapshot(snapshot => {
+                snapshot.forEach(doc => { zonesData[doc.id] = doc.data(); });
+                renderZoneSelect();
+                renderZoneOverview();
+            }, err => setConnStatus('Connection error: ' + err.message, 'error'));
+        }
+
+        // Live-updates the movements table on every device.
+        function listenToMovements() {
+            db.collection('movements').orderBy('time', 'desc').limit(300)
+              .onSnapshot(snapshot => {
+                logs = snapshot.docs.map(d => {
+                    const data = d.data();
+                    return {
+                        batch: data.batch || '',
+                        container: data.container || '',
+                        zone: data.zone || '',
+                        operator: data.operator || '',
+                        palletNumber: data.palletNumber || '',
+                        time: data.time && data.time.toDate ? data.time.toDate().toLocaleString() : 'Just now'
+                    };
+                });
+                renderLogs();
+                searchBatch();
+              }, err => setConnStatus('Connection error: ' + err.message, 'error'));
+        }
+
+        // ---------- Zone dropdown: only show zones with free pallets ----------
+        function renderZoneSelect() {
+            const select = document.getElementById('zoneSelect');
+            const previousValue = select.value;
+            select.innerHTML = '';
+
+            const placeholder = document.createElement('option');
+            placeholder.value = '';
+            placeholder.disabled = true;
+            placeholder.textContent = '-- Choose Zone --';
+            select.appendChild(placeholder);
+
+            let anyAvailable = false;
+
+            ZONE_NAMES.forEach(zoneName => {
+                const zone = zonesData[zoneName];
+                if (!zone) return;
+                const free = zone.pallets.filter(p => p === false).length;
+                if (free > 0) {
+                    anyAvailable = true;
+                    const opt = document.createElement('option');
+                    opt.value = zoneName;
+                    opt.textContent = `${zoneName} (${free} pallet${free > 1 ? 's' : ''} free)`;
+                    select.appendChild(opt);
+                }
+                // Zones with 0 free pallets are simply not added — they "disappear".
+            });
+
+            placeholder.selected = true;
+            if (previousValue && Array.from(select.options).some(o => o.value === previousValue)) {
+                select.value = previousValue;
+            }
+
+            const hint = document.getElementById('zoneHint');
+            const confirmBtn = document.getElementById('confirmBtn');
+            if (!anyAvailable) {
+                hint.textContent = 'All zones are currently full.';
+                confirmBtn.disabled = true;
+                confirmBtn.classList.add('opacity-50', 'cursor-not-allowed');
+            } else {
+                hint.textContent = '';
+                confirmBtn.disabled = false;
+                confirmBtn.classList.remove('opacity-50', 'cursor-not-allowed');
+            }
+        }
+
+        // ---------- Zone overview cards ----------
+        function renderZoneOverview() {
+            const container = document.getElementById('zoneOverview');
+            container.innerHTML = '';
+            ZONE_NAMES.forEach(zoneName => {
+                const zone = zonesData[zoneName];
+                if (!zone) return;
+                const free = zone.pallets.filter(p => p === false).length;
+                const isFull = free === 0;
+                const card = document.createElement('div');
+                card.className = `p-2 rounded-md border text-center ${
+                    isFull ? 'bg-rose-50 border-rose-200 text-rose-600' : 'bg-emerald-50 border-emerald-200 text-emerald-700'
+                }`;
+                card.innerHTML = `
+                    <div class="font-semibold">${zoneName}</div>
+                    <div>${isFull ? 'FULL' : free + ' / ' + PALLETS_PER_ZONE + ' free'}</div>
+                `;
+                container.appendChild(card);
+            });
+        }
+
+        // ---------- Camera Scanner ----------
+        function startScanner() {
+            document.getElementById('start-scan-btn').classList.add('hidden');
+            document.getElementById('stop-scan-btn').classList.remove('hidden');
+            const statusEl = document.getElementById('scan-status');
+            statusEl.classList.remove('hidden');
+            statusEl.textContent = 'Starting camera...';
+
+            html5QrCode = new Html5Qrcode("reader");
+
+            const config = { fps: 10, qrbox: { width: 250, height: 250 } };
+
+            html5QrCode.start(
+                { facingMode: "environment" },
+                config,
+                onScanSuccess,
+                onScanFailure
+            ).then(() => {
+                statusEl.textContent = 'Point the camera at the QR code';
+            }).catch((err) => {
+                let msg = 'Camera error: ' + err;
+                if (String(err).includes('NotAllowedError')) {
+                    msg = 'Camera permission was blocked. Please allow camera access for this site in your browser settings, then try again.';
+                } else if (String(err).includes('NotFoundError')) {
+                    msg = 'No camera was found on this device.';
+                }
+                statusEl.textContent = msg;
+                document.getElementById('start-scan-btn').classList.remove('hidden');
+                document.getElementById('stop-scan-btn').classList.add('hidden');
+            });
+        }
+
+        function stopScanner() {
+            if (html5QrCode) {
+                html5QrCode.stop().then(() => {
+                    html5QrCode.clear();
+                    document.getElementById('start-scan-btn').classList.remove('hidden');
+                    document.getElementById('stop-scan-btn').classList.add('hidden');
+                    document.getElementById('scan-status').classList.add('hidden');
+                }).catch(() => {
+                    document.getElementById('start-scan-btn').classList.remove('hidden');
+                    document.getElementById('stop-scan-btn').classList.add('hidden');
+                });
+            }
+        }
+
+        function onScanFailure(error) {
+            // Called continuously while no QR is found — ignore, this is normal.
+        }
+
+        function onScanSuccess(decodedText) {
+            if (navigator.vibrate) navigator.vibrate(150);
+            document.getElementById('batchInput').value = decodedText.trim();
+            document.getElementById('containerInput').focus();
+            stopScanner();
+            const statusEl = document.getElementById('scan-status');
+            statusEl.classList.remove('hidden');
+            statusEl.textContent = 'QR captured ✔';
+        }
+
+        // ---------- Logging (with safe pallet assignment) ----------
+        async function logMovement() {
+            const zone = document.getElementById('zoneSelect').value;
+            const batch = document.getElementById('batchInput').value.trim();
+            const container = document.getElementById('containerInput').value.trim();
+            const operator = document.getElementById('operatorInput').value.trim();
+
+            if (!zone || !batch || !container || !operator) {
+                alert('Please fill in all fields before logging.');
+                return;
+            }
+
+            const confirmBtn = document.getElementById('confirmBtn');
+            confirmBtn.disabled = true;
+            confirmBtn.textContent = 'Saving...';
+
+            try {
+                let assignedPallet = null;
+
+                // Transaction guarantees two employees can't grab the same pallet
+                // even if they both hit Confirm at the exact same moment.
+                await db.runTransaction(async (t) => {
+                    const zoneRef = db.collection('zones').doc(zone);
+                    const zoneDoc = await t.get(zoneRef);
+                    if (!zoneDoc.exists) throw new Error('Zone not found');
+                    const pallets = zoneDoc.data().pallets;
+                    const idx = pallets.findIndex(p => p === false);
+                    if (idx === -1) throw new Error('ZONE_FULL');
+                    pallets[idx] = true;
+                    t.update(zoneRef, { pallets });
+                    assignedPallet = idx + 1;
+                });
+
+                await db.collection('movements').add({
+                    batch, container, zone, operator,
+                    palletNumber: assignedPallet,
+                    time: firebase.firestore.FieldValue.serverTimestamp()
+                });
+
+                document.getElementById('batchInput').value = '';
+                document.getElementById('containerInput').value = '';
+                document.getElementById('zoneSelect').selectedIndex = 0;
+
+                const statusEl = document.getElementById('scan-status');
+                statusEl.classList.remove('hidden');
+                statusEl.textContent = `Logged to ${zone}, Pallet ${assignedPallet} ✔`;
+            } catch (err) {
+                if (err.message === 'ZONE_FULL') {
+                    alert('That zone just became full (another employee filled the last pallet). Please pick a different zone.');
+                } else {
+                    alert('Error saving: ' + err.message);
+                }
+            } finally {
+                confirmBtn.disabled = false;
+                confirmBtn.textContent = 'Confirm & Log Container';
+            }
+        }
+
+        // ---------- Table rendering ----------
+        function renderLogs() {
+            const tbody = document.getElementById('logTableBody');
+            tbody.innerHTML = '';
+            logs.forEach(log => {
+                const row = document.createElement('tr');
+                row.className = 'border-t border-slate-100';
+                row.innerHTML = `
+                    <td class="p-2">${escapeHtml(log.batch)}</td>
+                    <td class="p-2">${escapeHtml(log.container)}</td>
+                    <td class="p-2">${escapeHtml(log.zone)}</td>
+                    <td class="p-2">${escapeHtml(String(log.palletNumber))}</td>
+                    <td class="p-2">${escapeHtml(log.time)}</td>
+                `;
+                tbody.appendChild(row);
+            });
+        }
+
+        function escapeHtml(str) {
+            const div = document.createElement('div');
+            div.textContent = str;
+            return div.innerHTML;
+        }
+
+        // ---------- Search by Batch ----------
+        function searchBatch() {
+            const query = document.getElementById('searchBatchInput').value.trim().toLowerCase();
+            const resultBox = document.getElementById('searchResult');
+
+            if (!query) {
+                resultBox.classList.add('hidden');
+                resultBox.innerHTML = '';
+                return;
+            }
+
+            const matches = logs.filter(l => l.batch.toLowerCase() === query);
+
+            if (matches.length === 0) {
+                resultBox.classList.remove('hidden');
+                resultBox.innerHTML = `
+                    <div class="bg-amber-50 border border-amber-200 text-amber-700 text-xs p-2.5 rounded-md">
+                        No record found for batch "${escapeHtml(query)}".
+                    </div>`;
+                return;
+            }
+
+            const latest = matches[0]; // logs are already newest-first
+            resultBox.classList.remove('hidden');
+            resultBox.innerHTML = `
+                <div class="bg-emerald-50 border border-emerald-200 p-2.5 rounded-md">
+                    <p class="text-xs text-emerald-700">
+                        Batch <span class="font-bold">${escapeHtml(latest.batch)}</span> was last seen in
+                        <span class="font-bold">${escapeHtml(latest.zone)}</span>, Pallet ${escapeHtml(String(latest.palletNumber))}
+                    </p>
+                    <p class="text-[11px] text-emerald-600 mt-0.5">
+                        Container: ${escapeHtml(latest.container)} • ${escapeHtml(latest.time)} • Logged by ${escapeHtml(latest.operator)}
+                    </p>
+                    ${matches.length > 1 ? `<p class="text-[11px] text-emerald-500 mt-1">${matches.length} total movements found for this batch</p>` : ''}
+                </div>`;
+        }
+
+        // ---------- Export ----------
+        function exportPDF() {
+            const { jsPDF } = window.jspdf;
+            const doc = new jsPDF();
+            doc.text('Corridor Container Tracker - Movement Log', 14, 15);
+            doc.autoTable({
+                startY: 20,
+                head: [['Batch', 'Container', 'Zone', 'Pallet', 'Operator', 'Time']],
+                body: logs.map(l => [l.batch, l.container, l.zone, l.palletNumber, l.operator, l.time])
+            });
+            doc.save('container_log.pdf');
+        }
+
+        function exportCSV() {
+            let csv = 'Batch,Container,Zone,Pallet,Operator,Time\n';
+            logs.forEach(l => {
+                csv += `${l.batch},${l.container},${l.zone},${l.palletNumber},${l.operator},${l.time}\n`;
+            });
+            const blob = new Blob([csv], { type: 'text/csv' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'container_log.csv';
+            a.click();
+            URL.revokeObjectURL(url);
+        }
+
+        // Boot the app
+        initFirebase();
+    </script>
+</body>
+</html>
